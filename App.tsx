@@ -16,49 +16,40 @@ import {
 import MarkdownContent from './components/MarkdownContent';
 
 const personas = [
-  { id: 'general', label: 'Omni', desc: 'Strategic' },
-  { id: 'financial', label: 'Quant', desc: 'Financial' },
-  { id: 'technical', label: 'System', desc: 'Technical' },
-  { id: 'market', label: 'Market', desc: 'Consumer' },
+  { id: 'general', label: 'Omni' },
+  { id: 'financial', label: 'Quant' },
+  { id: 'technical', label: 'System' },
+  { id: 'market', label: 'Market' },
 ];
 
-const SentimentBadge = ({ sentiment }: { sentiment?: string }) => {
-  if (!sentiment) return null;
-  const colors: Record<string, string> = {
-    positive: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    negative: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
-    neutral: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
-    mixed: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  };
-  return (
-    <div className={`px-2 py-0.5 rounded-full border text-[8px] font-black uppercase tracking-widest ${colors[sentiment] || colors.neutral}`}>
-      {sentiment}
-    </div>
-  );
+const glossaryTerms: Record<string, string> = {
+  neuralAutonomy: "The system self-analyzes your query to automatically configure tool-sets, personas, and thinking budgets.",
+  swarmPulse: "Direct visibility into the Meta-Planner's internal reasoning and agentic decisions.",
+  spatialGrounding: "Geo-verifying business data and physical coordinates via global mapping indices.",
+  missionBoard: "Real-time task breakdown managed by the sub-agent swarm.",
+  thinkingBudget: "Recursive logic cycles allocated for complex reasoning before the system generates an answer."
 };
 
-const SidebarMapItem = ({ chunk }: { chunk: GroundingChunk }) => {
-  const data = chunk.maps;
-  if (!data) return null;
+const WithGlossary: React.FC<{ term: string; isActive: boolean; children: React.ReactElement; position?: 'top' | 'bottom' | 'left' | 'right' }> = ({ term, isActive, children, position = 'bottom' }) => {
+  const [isHovered, setIsHovered] = useState(false);
+  const text = glossaryTerms[term] || term;
+  if (!isActive) return children;
+
+  const posClasses = {
+    top: 'bottom-full left-1/2 -translate-x-1/2 mb-3',
+    bottom: 'top-full left-1/2 -translate-x-1/2 mt-3',
+    left: 'right-full top-1/2 -translate-y-1/2 mr-3',
+    right: 'left-full top-1/2 -translate-y-1/2 ml-3'
+  }[position];
+
   return (
-    <div className="group bg-[#0d1117] border border-slate-800 rounded-2xl overflow-hidden transition-all hover:border-cyan-500/40 p-1">
-      <div className="aspect-[16/10] relative rounded-xl overflow-hidden bg-slate-950">
-        <iframe
-          title={data.title}
-          width="100%"
-          height="100%"
-          frameBorder="0"
-          src={`https://maps.google.com/maps?q=${encodeURIComponent(data.title)}&t=m&z=15&ie=UTF8&iwloc=&output=embed`}
-          className="grayscale invert opacity-60 contrast-125 group-hover:opacity-100 transition-opacity duration-500"
-        />
-        <div className="absolute inset-0 pointer-events-none ring-1 ring-inset ring-white/5 rounded-xl" />
-      </div>
-      <div className="p-3 flex items-center justify-between gap-2">
-        <div className="text-[10px] font-bold text-slate-300 truncate">{data.title}</div>
-        <a href={data.uri} target="_blank" rel="noreferrer" className="shrink-0 p-1.5 rounded-lg hover:bg-slate-800 text-slate-500 hover:text-cyan-400 transition-all">
-          <ExternalLinkIcon className="w-3.5 h-3.5" />
-        </a>
-      </div>
+    <div className="relative inline-block" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+      {children}
+      {isHovered && (
+        <div className={`fixed lg:absolute z-[9999] w-56 p-4 rounded-2xl bg-slate-900 border border-cyan-500 shadow-2xl backdrop-blur-3xl animate-in fade-in zoom-in duration-150 pointer-events-none ${posClasses}`}>
+          <p className="text-[10px] font-bold text-cyan-50 leading-relaxed text-center font-mono">{text}</p>
+        </div>
+      )}
     </div>
   );
 };
@@ -67,10 +58,12 @@ const App: React.FC = () => {
   const [state, setState] = useState<SearchState>({ activeNodeIds: [], history: [], tasks: [], error: null });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [isAutonomous, setIsAutonomous] = useState(true);
   const [persona, setPersona] = useState<'general' | 'financial' | 'technical' | 'market'>('general');
-  const [deepSearch, setDeepSearch] = useState(true);
   const [useMaps, setUseMaps] = useState(false);
   const [viewMode, setViewMode] = useState<'report' | 'map' | 'api'>('report');
+  const [isGlossaryActive, setIsGlossaryActive] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [selectedFile, setSelectedFile] = useState<FileContext | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
@@ -78,19 +71,24 @@ const App: React.FC = () => {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('omni_v9');
+    const saved = localStorage.getItem('omni_v11');
     if (saved) {
       try {
         const data = JSON.parse(saved);
         setState(s => ({ ...s, history: data.history || [], tasks: data.tasks || [] }));
+        setIsAutonomous(data.isAutonomous ?? true);
         if (data.history?.length) setSelectedId(data.history[0].id);
       } catch {}
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('omni_v9', JSON.stringify({ history: state.history.slice(0, 30), tasks: state.tasks }));
-  }, [state.history, state.tasks]);
+    localStorage.setItem('omni_v11', JSON.stringify({ 
+      history: state.history.slice(0, 30), 
+      tasks: state.tasks,
+      isAutonomous 
+    }));
+  }, [state.history, state.tasks, isAutonomous]);
 
   const parseOutput = (text: string) => {
     const logs: string[] = [];
@@ -100,19 +98,10 @@ const App: React.FC = () => {
     const lines = text.split('\n');
 
     for (const line of lines) {
-      if (line.includes('[DATA_BOUNDARY]')) {
-        inDataBoundary = true;
-        continue;
-      }
-      if (inDataBoundary) {
-        try { rawJson = JSON.parse(line.trim()); } catch {}
-        continue;
-      }
-      if (line.includes('[SWARM_LOG]')) {
-        logs.push(line.replace('[SWARM_LOG]', '').trim());
-      } else {
-        report += line + '\n';
-      }
+      if (line.includes('[DATA_BOUNDARY]')) { inDataBoundary = true; continue; }
+      if (inDataBoundary) { try { rawJson = JSON.parse(line.trim()); } catch {} continue; }
+      if (line.includes('[SWARM_LOG]')) { logs.push(line.replace('[SWARM_LOG]', '').trim()); }
+      else { report += line + '\n'; }
     }
     return { logs, report: report.trim(), rawJson };
   };
@@ -136,13 +125,12 @@ const App: React.FC = () => {
     setSelectedId(searchId);
 
     try {
-      const stream = geminiService.searchStream(activeQuery || "Analyze this request.", { 
-        model: 'gemini-3-flash-preview', deepSearch, useMaps, persona 
+      const stream = geminiService.searchStream(activeQuery || "Analyze request parameters.", { 
+        model: 'gemini-3-pro-preview', autonomous: isAutonomous, persona, useMaps 
       });
 
       for await (const update of stream) {
         const { logs, report, rawJson } = parseOutput(update.text);
-        
         if (update.functionCalls) {
           update.functionCalls.forEach((fc: any) => {
             if (fc.name === 'manageTasks') {
@@ -150,7 +138,6 @@ const App: React.FC = () => {
             }
           });
         }
-
         setState(prev => ({
           ...prev,
           history: prev.history.map(h => h.id === searchId ? {
@@ -170,52 +157,46 @@ const App: React.FC = () => {
   const currentTasks = state.tasks.filter(t => t.searchId === selectedId);
 
   return (
-    <div className="flex h-screen bg-[#020617] text-slate-100 selection:bg-cyan-500/30 overflow-hidden font-sans">
+    <div className="flex h-screen bg-[#020617] text-slate-100 overflow-hidden font-sans">
       
-      {/* Sidebar - Persistent History */}
-      <aside className={`fixed lg:static inset-y-0 left-0 w-72 bg-[#070b14]/95 border-r border-slate-800 z-50 transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-        <div className="p-6 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg">
-              <SearchIcon className="w-5 h-5 text-white" />
-            </div>
-            <h2 className="text-xs font-black uppercase tracking-widest text-white">OmniSwarm</h2>
+      {/* Sidebar - History */}
+      <aside className={`fixed lg:static inset-y-0 left-0 w-72 bg-[#050810] border-r border-slate-800/50 z-50 transition-transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+        <div className="p-6 h-full flex flex-col">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="w-8 h-8 rounded-lg bg-cyan-500 flex items-center justify-center"><SearchIcon className="w-5 h-5 text-black" /></div>
+            <h2 className="text-[10px] font-black uppercase tracking-[0.2em]">Nexus Swarm</h2>
           </div>
-          <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden p-2 text-slate-500 hover:text-white">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-
-        <div className="p-4 overflow-y-auto h-[calc(100vh-80px)] space-y-8 custom-scrollbar">
-          <button onClick={() => { setSelectedId(null); setIsSidebarOpen(false); }} className="w-full py-3.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black uppercase tracking-widest hover:bg-cyan-500/20 transition-all">
-            + Ignite New Node
-          </button>
-
-          <div className="space-y-4">
-            <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest px-2">History</label>
-            <div className="space-y-1">
-              {state.history.map(h => (
-                <button key={h.id} onClick={() => { setSelectedId(h.id); setIsSidebarOpen(false); }} className={`w-full text-left p-3.5 rounded-xl transition-all flex items-center gap-3 group border ${selectedId === h.id ? 'bg-slate-800/80 border-slate-700 shadow-xl' : 'bg-transparent border-transparent hover:bg-slate-800/20'}`}>
-                  <div className={`w-1 h-1 rounded-full ${h.status === 'streaming' ? 'bg-cyan-500 animate-pulse' : 'bg-slate-700'}`} />
-                  <span className={`text-[11px] font-bold truncate flex-1 ${selectedId === h.id ? 'text-white' : 'text-slate-500 group-hover:text-slate-300'}`}>{h.query}</span>
-                </button>
-              ))}
-            </div>
+          <button onClick={() => { setSelectedId(null); setIsSidebarOpen(false); }} className="w-full py-3 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 mb-8 transition-all">New Mission</button>
+          <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1">
+             <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest px-2 block mb-2">History Archive</label>
+             {state.history.map(h => (
+               <button key={h.id} onClick={() => { setSelectedId(h.id); setIsSidebarOpen(false); }} className={`w-full text-left p-3 rounded-xl transition-all border text-[11px] font-bold truncate ${selectedId === h.id ? 'bg-slate-800/50 border-cyan-500/30 text-white' : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300'}`}>{h.query}</button>
+             ))}
           </div>
         </div>
       </aside>
 
       {/* Main Terminal Interface */}
-      <main className="flex-1 flex flex-col relative bg-[radial-gradient(circle_at_50%_0%,_#0f172a_0%,_transparent_60%)]">
+      <main className="flex-1 flex flex-col relative bg-[radial-gradient(circle_at_50%_0%,_#0a1329_0%,_transparent_60%)]">
         
-        {/* Navigation / Controls */}
+        {/* Simplified Header */}
         <header className="h-16 border-b border-slate-800/50 flex items-center justify-between px-6 backdrop-blur-3xl sticky top-0 z-40">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6">
             <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 text-slate-400"><SearchIcon className="w-5 h-5" /></button>
-            <div className="flex bg-black/40 p-1 rounded-lg border border-slate-800">
-              {personas.map(p => (
-                <button key={p.id} onClick={() => setPersona(p.id as any)} className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase transition-all ${persona === p.id ? 'bg-slate-800 text-cyan-400' : 'text-slate-600 hover:text-slate-300'}`}>{p.label}</button>
-              ))}
+            <div className="flex items-center gap-4">
+              <WithGlossary term="neuralAutonomy" isActive={isGlossaryActive}>
+                <button onClick={() => setIsAutonomous(!isAutonomous)} className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase transition-all flex items-center gap-2 border ${isAutonomous ? 'bg-cyan-500 text-black border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.4)]' : 'bg-slate-900 border-slate-800 text-slate-500'}`}>
+                   <div className={`w-1.5 h-1.5 rounded-full ${isAutonomous ? 'bg-black animate-pulse' : 'bg-slate-700'}`} />
+                   {isAutonomous ? 'Neural Autonomy ON' : 'Manual Mode'}
+                </button>
+              </WithGlossary>
+              {!isAutonomous && (
+                <div className="flex bg-black/40 p-1 rounded-lg border border-slate-800 animate-in fade-in slide-in-from-left-2">
+                  {personas.map(p => (
+                    <button key={p.id} onClick={() => setPersona(p.id as any)} className={`px-3 py-1 rounded-md text-[9px] font-black uppercase transition-all ${persona === p.id ? 'bg-slate-800 text-cyan-400' : 'text-slate-600 hover:text-slate-300'}`}>{p.label}</button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -225,28 +206,26 @@ const App: React.FC = () => {
                   <button key={mode} onClick={() => setViewMode(mode)} className={`px-4 py-1.5 rounded-md text-[10px] font-black uppercase transition-all ${viewMode === mode ? 'bg-slate-800 text-cyan-400' : 'text-slate-600 hover:text-slate-300'}`}>{mode}</button>
                 ))}
              </div>
-             <button onClick={() => setUseMaps(!useMaps)} className={`px-4 py-1.5 rounded-lg border text-[10px] font-black uppercase transition-all flex items-center gap-2 ${useMaps ? 'bg-blue-500/10 border-blue-500/40 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
-               <MapPinIcon className="w-3.5 h-3.5" /> Maps
-             </button>
+             <button onClick={() => setIsGlossaryActive(!isGlossaryActive)} className={`p-2 rounded-lg transition-all ${isGlossaryActive ? 'text-cyan-400 bg-cyan-500/10' : 'text-slate-600'}`}>?</button>
           </div>
         </header>
 
         {/* Dynamic Workspace */}
-        <div className="flex-1 overflow-y-auto px-6 md:px-12 lg:px-24 py-12 custom-scrollbar space-y-12">
+        <div className="flex-1 overflow-y-auto px-6 md:px-12 lg:px-24 py-12 custom-scrollbar">
           {!currentResult ? (
-            <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-10 animate-in fade-in duration-1000">
-              <div className="w-20 h-20 rounded-3xl bg-slate-900/50 border border-slate-800 flex items-center justify-center shadow-2xl relative">
+            <div className="h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto space-y-12 animate-in fade-in duration-1000">
+              <div className="relative">
                 <div className="absolute inset-0 bg-cyan-500/10 blur-3xl animate-pulse" />
-                <SearchIcon className="w-10 h-10 text-cyan-500 relative z-10" />
+                <div className="w-24 h-24 rounded-[2rem] bg-slate-900/50 border border-slate-800 flex items-center justify-center shadow-2xl relative z-10"><SearchIcon className="w-10 h-10 text-cyan-500" /></div>
               </div>
               <div className="space-y-4">
-                <h2 className="text-4xl md:text-5xl font-black text-white uppercase tracking-tighter">OMNISWARM ENGINE</h2>
-                <p className="text-slate-500 text-lg">Hyper-specialized research cluster. Enter mission parameters to ignite sub-agent parallel processing.</p>
+                <h1 className="text-5xl md:text-7xl font-black text-white uppercase tracking-tighter leading-none italic">NEXUS</h1>
+                <p className="text-slate-500 text-xl font-medium tracking-tight">The ultimate search engine is now autonomous. Simply ask, and the swarm thinks, configures, and delivers.</p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
-                {["Latest AI investment trends in EU", "Detailed hardware specs of PS5 Pro", "Research top fine-dining SF", "Synthesize data on EV battery recycling"].map(s => (
-                  <button key={s} onClick={() => { setQuery(s); handleSearch(); }} className="p-4 rounded-xl bg-slate-900/40 border border-slate-800 hover:border-cyan-500/30 transition-all text-left text-xs font-bold text-slate-500 hover:text-white flex items-center gap-3">
-                    <span className="text-cyan-500">→</span> {s}
+              <div className="flex flex-wrap justify-center gap-3 opacity-60">
+                {["Latest AI market trends", "Deep spec analysis of RTX 5090", "Best rooftop restaurants in SF", "Synthesize lithium-ion battery recycling data"].map(s => (
+                  <button key={s} onClick={() => { setQuery(s); handleSearch(); }} className="px-5 py-3 rounded-2xl bg-slate-900/40 border border-slate-800 hover:border-cyan-500/40 text-xs font-bold text-slate-400 hover:text-white transition-all">
+                    {s}
                   </button>
                 ))}
               </div>
@@ -254,90 +233,54 @@ const App: React.FC = () => {
           ) : (
             <div className="max-w-6xl mx-auto space-y-12 pb-48">
               
-              <div className="flex flex-col gap-6 pt-4">
-                 <div className="flex flex-wrap items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                       <div className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 border ${currentResult.status === 'streaming' ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
-                         <div className={`w-1.5 h-1.5 rounded-full ${currentResult.status === 'streaming' ? 'bg-cyan-400 animate-pulse' : 'bg-emerald-400'}`} />
-                         {currentResult.status === 'streaming' ? 'Swarm Working' : 'Complete'}
-                       </div>
-                       <SentimentBadge sentiment={currentResult.sentiment} />
+              <div className="flex flex-col gap-6">
+                 <div className="flex items-center justify-between">
+                    <div className={`px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 border ${currentResult.status === 'streaming' ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
+                       <div className={`w-1.5 h-1.5 rounded-full ${currentResult.status === 'streaming' ? 'bg-cyan-400 animate-pulse' : 'bg-emerald-400'}`} />
+                       {isAutonomous ? 'Neural Autonomy Active' : 'Manual Mission'}
                     </div>
                     <button onClick={() => currentResult.answer && navigator.clipboard.writeText(currentResult.answer)} className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-500 hover:text-white transition-all"><CopyIcon className="w-4 h-4" /></button>
                  </div>
-                 <h1 className="text-3xl md:text-5xl font-black text-white tracking-tight uppercase leading-[1.1]">{currentResult.query}</h1>
+                 <h1 className="text-4xl md:text-6xl font-black text-white tracking-tighter uppercase leading-none">{currentResult.query}</h1>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
-                 
-                 <div className="lg:col-span-8 space-y-10">
+                 <div className="lg:col-span-8 space-y-12">
                     
-                    {/* Swarm Console */}
+                    {/* The Swarm Pulse (Internal Reasoning) */}
                     {(currentResult.swarmLogs?.length || 0) > 0 && (
-                      <div className="space-y-3">
-                        <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest flex items-center gap-2">
-                           <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse" /> Orchestration Log
-                        </label>
-                        <div className="p-5 rounded-2xl bg-black/60 border border-slate-800/50 font-mono text-[10px] space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar shadow-inner">
+                      <div className="space-y-4">
+                        <WithGlossary term="swarmPulse" isActive={isGlossaryActive} position="right">
+                          <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest flex items-center gap-2">
+                             <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse" /> Swarm Intelligence Log
+                          </label>
+                        </WithGlossary>
+                        <div className="p-6 rounded-[2rem] bg-black/40 border border-slate-800/50 font-mono text-[10px] space-y-2 max-h-56 overflow-y-auto custom-scrollbar shadow-inner backdrop-blur-xl">
                           {currentResult.swarmLogs?.map((log, i) => (
-                            <div key={i} className="flex gap-3 animate-in fade-in slide-in-from-left-2 duration-300">
-                              <span className="text-cyan-500 font-bold shrink-0">{log.split('>')[0]}</span>
-                              <span className="text-slate-400">{log.split('>')[1] || log}</span>
+                            <div key={i} className="flex gap-4 animate-in fade-in slide-in-from-left-4 duration-500">
+                              <span className="text-cyan-500/80 font-bold shrink-0">{log.split('>')[0]}</span>
+                              <span className="text-slate-400 leading-relaxed">{log.split('>')[1] || log}</span>
                             </div>
                           ))}
                         </div>
                       </div>
                     )}
 
-                    {/* Mission Control Board */}
-                    {currentTasks.length > 0 && (
-                      <div className="space-y-3">
-                        <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Mission Status</label>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                           {currentTasks.map(t => (
-                             <div key={t.id} className={`p-4 rounded-xl border transition-all flex items-center gap-4 ${t.status === 'completed' ? 'bg-emerald-500/5 border-emerald-500/20 opacity-60' : 'bg-[#0d1117] border-slate-800'}`}>
-                               <div className={`w-1.5 h-1.5 rounded-full ${t.status === 'completed' ? 'bg-emerald-500' : t.status === 'in_progress' ? 'bg-cyan-500 animate-pulse' : 'bg-slate-700'}`} />
-                               <span className="text-[11px] font-bold text-slate-300">{t.description}</span>
-                             </div>
-                           ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Main Display Area */}
+                    {/* Dynamic Viewport */}
                     <div className="relative min-h-[400px]">
                        {viewMode === 'report' ? (
-                         <div className="animate-in fade-in duration-700">
-                            {currentResult.answer ? (
-                              <div className="p-1 rounded-[2.5rem] bg-gradient-to-b from-slate-800 to-transparent">
-                                <div className="p-8 md:p-12 rounded-[2.4rem] bg-[#070b14] backdrop-blur-3xl relative overflow-hidden">
-                                  <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none"><SearchIcon className="w-40 h-40" /></div>
-                                  <MarkdownContent content={currentResult.answer} />
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="py-32 flex flex-col items-center justify-center space-y-6">
-                                <LoadingSpinner />
-                                <p className="text-cyan-500 font-black text-[10px] uppercase tracking-[0.4em] animate-pulse">Aggregating Swarm Insights...</p>
-                              </div>
-                            )}
+                         <div className="p-10 md:p-14 rounded-[3rem] bg-[#070b14] border border-slate-800/80 shadow-[0_40px_100px_rgba(0,0,0,0.6)] backdrop-blur-3xl animate-in fade-in duration-1000">
+                            {currentResult.answer ? <MarkdownContent content={currentResult.answer} /> : <div className="py-20 flex flex-col items-center gap-6"><LoadingSpinner /><p className="text-cyan-500 font-black text-[10px] uppercase tracking-widest animate-pulse">Synthesizing absolute data...</p></div>}
                          </div>
                        ) : viewMode === 'api' ? (
-                         <pre className="p-8 rounded-[2.5rem] bg-black border border-slate-800 text-cyan-400/80 font-mono text-xs overflow-x-auto leading-relaxed">
-                            {JSON.stringify(currentResult.rawJson || { status: "Generating final extraction..." }, null, 2)}
+                         <pre className="p-10 rounded-[3rem] bg-black border border-slate-800 text-cyan-400/80 font-mono text-xs overflow-x-auto leading-relaxed shadow-2xl">
+                            {JSON.stringify(currentResult.rawJson || { status: "Calculating entities..." }, null, 2)}
                          </pre>
                        ) : (
-                         <div className="grid grid-cols-1 gap-6">
+                         <div className="grid grid-cols-1 gap-8">
                             {currentResult.chunks.filter(c => c.maps).map((c, i) => (
-                              <div key={i} className="h-[450px] rounded-[2.5rem] border border-slate-800 overflow-hidden bg-slate-950 shadow-2xl">
-                                 <iframe
-                                  title={c.maps?.title}
-                                  width="100%"
-                                  height="100%"
-                                  frameBorder="0"
-                                  src={`https://maps.google.com/maps?q=${encodeURIComponent(c.maps?.title || '')}&t=m&z=17&ie=UTF8&iwloc=&output=embed`}
-                                  className="grayscale invert contrast-110 opacity-70 hover:opacity-100 transition-opacity duration-700"
-                                />
+                              <div key={i} className="h-[450px] rounded-[3rem] border border-slate-800 overflow-hidden bg-slate-950 shadow-2xl grayscale invert contrast-125 opacity-70">
+                                 <iframe title={c.maps?.title} width="100%" height="100%" frameBorder="0" src={`https://maps.google.com/maps?q=${encodeURIComponent(c.maps?.title || '')}&t=m&z=17&ie=UTF8&iwloc=&output=embed`} />
                               </div>
                             ))}
                          </div>
@@ -345,63 +288,38 @@ const App: React.FC = () => {
                     </div>
                  </div>
 
-                 {/* Evidence / Grounding Panel */}
+                 {/* Lateral Verification Panel */}
                  <div className="lg:col-span-4 space-y-8 sticky top-24">
-                    <div className="p-7 rounded-[2.2rem] bg-[#0d1117] border border-slate-800 shadow-2xl space-y-8">
-                       <div className="flex items-center justify-between">
-                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Grounding Nodes</label>
-                         <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 text-[9px] font-bold">{currentResult.chunks.length} Detected</span>
-                       </div>
-                       
-                       <div className="space-y-4 max-h-[550px] overflow-y-auto custom-scrollbar pr-1">
+                    <div className="p-8 rounded-[2.5rem] bg-[#0d1117] border border-slate-800/80 shadow-2xl space-y-8">
+                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center justify-between">
+                         Neural Evidence
+                         <span className="px-2 py-0.5 rounded-lg bg-cyan-500/10 text-cyan-400 text-[9px] font-bold">{currentResult.chunks.length} Nodes</span>
+                       </label>
+                       <div className="space-y-4 max-h-[600px] overflow-y-auto custom-scrollbar pr-1">
                           {currentResult.chunks.map((chunk, i) => {
-                            if (chunk.maps) return <SidebarMapItem key={i} chunk={chunk} />;
-                            const data = chunk.web;
+                            const data = chunk.web || chunk.maps;
                             if (!data) return null;
                             return (
-                              <a key={i} href={data.uri} target="_blank" rel="noreferrer" className="block p-4 rounded-xl border border-slate-800/50 hover:border-cyan-500/30 bg-black/40 group transition-all animate-in slide-in-from-bottom-2 duration-500">
-                                <div className="flex items-center gap-2 mb-2 opacity-50 text-[8px] font-black uppercase tracking-widest group-hover:text-cyan-400">
-                                  <ExternalLinkIcon className="w-3 h-3" /> Web Source
-                                </div>
-                                <div className="text-[11px] font-bold text-slate-300 line-clamp-2 leading-tight group-hover:text-white transition-colors">{data.title}</div>
+                              <a key={i} href={data.uri} target="_blank" rel="noreferrer" className="block p-4 rounded-2xl border border-slate-800/50 hover:border-cyan-500/30 bg-black/40 group transition-all animate-in slide-in-from-right-4">
+                                <div className="text-[8px] font-black uppercase tracking-widest mb-1 opacity-40 group-hover:text-cyan-400 transition-colors">Verified Source</div>
+                                <div className="text-[11px] font-bold text-slate-300 leading-tight group-hover:text-white transition-colors">{data.title}</div>
                               </a>
                             );
                           })}
-                          {currentResult.chunks.length === 0 && (
-                            <div className="py-24 text-center space-y-5 opacity-30">
-                               <div className="w-10 h-10 rounded-full border border-dashed border-slate-800 flex items-center justify-center mx-auto animate-spin-slow">
-                                  <div className="w-1.5 h-1.5 bg-slate-500 rounded-full" />
-                               </div>
-                               <p className="text-[9px] font-black uppercase tracking-[0.3em]">Intercepting Data...</p>
-                            </div>
-                          )}
                        </div>
                     </div>
                  </div>
               </div>
             </div>
           )}
-          <div ref={bottomRef} className="h-64" />
         </div>
 
-        {/* Console / Command Bar */}
-        <div className="absolute bottom-0 left-0 right-0 p-8 md:p-12 bg-gradient-to-t from-[#020617] via-[#020617]/90 to-transparent pointer-events-none">
-           <div className="max-w-4xl mx-auto pointer-events-auto">
-              {selectedFile && (
-                <div className="flex items-center gap-3 p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-2xl w-fit mb-5 animate-in slide-in-from-bottom-6 backdrop-blur-xl shadow-2xl">
-                   <div className="w-11 h-11 rounded-lg bg-black flex items-center justify-center border border-white/5 overflow-hidden">
-                      {selectedFile.mimeType.startsWith('image/') ? <img src={`data:${selectedFile.mimeType};base64,${selectedFile.data}`} className="w-full h-full object-cover" /> : <DocumentIcon className="w-5 h-5 text-indigo-400" />}
-                   </div>
-                   <div className="text-[10px] font-bold text-cyan-400 pr-5 truncate max-w-[140px]">{selectedFile.name}</div>
-                   <button onClick={() => setSelectedFile(null)} className="p-2 hover:bg-red-500/20 rounded-lg text-slate-500 hover:text-red-400 transition-all">
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
-                   </button>
-                </div>
-              )}
-
+        {/* Command Console */}
+        <div className="absolute bottom-0 left-0 right-0 p-8 md:p-12 bg-gradient-to-t from-[#020617] via-[#020617]/90 to-transparent z-40">
+           <div className="max-w-4xl mx-auto">
               <form onSubmit={handleSearch} className="relative group">
-                 <div className="absolute -inset-1.5 bg-gradient-to-r from-cyan-500/20 to-indigo-600/20 rounded-[2.5rem] blur-2xl opacity-0 group-focus-within:opacity-100 transition duration-1000" />
-                 <div className="relative flex items-center bg-[#0d1117] border border-slate-800 group-focus-within:border-cyan-500/40 rounded-[2.2rem] shadow-[0_40px_80px_-20px_rgba(0,0,0,0.8)] p-2 pr-6 transition-all duration-300">
+                 <div className="absolute -inset-1.5 bg-gradient-to-r from-cyan-500/30 to-indigo-600/30 rounded-[3rem] blur-2xl opacity-0 group-focus-within:opacity-100 transition duration-1000" />
+                 <div className="relative flex items-center bg-[#0d1117] border border-slate-800 group-focus-within:border-cyan-500/50 rounded-[2.5rem] shadow-2xl p-2.5 pr-8 transition-all">
                     <button type="button" onClick={() => fileInputRef.current?.click()} className="w-14 h-14 flex items-center justify-center text-slate-600 hover:text-cyan-400 transition-all shrink-0">
                       <DocumentIcon className="w-6 h-6" />
                     </button>
@@ -411,19 +329,18 @@ const App: React.FC = () => {
                       onChange={(e) => setQuery(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSearch(); } }}
                       rows={1}
-                      placeholder={selectedId ? "Request further analysis or refinements..." : "Execute deep research mission..."}
-                      className="flex-1 bg-transparent border-none focus:ring-0 px-5 py-5 text-white placeholder-slate-700 text-lg font-bold tracking-tight resize-none no-scrollbar h-full min-h-[64px]"
+                      placeholder={isAutonomous ? "Command the swarm..." : "Enter mission parameters..."}
+                      className="flex-1 bg-transparent border-none focus:ring-0 px-5 py-5 text-white placeholder-slate-700 text-xl font-bold tracking-tight resize-none no-scrollbar min-h-[70px]"
                     />
-                    <button type="submit" disabled={!query.trim() && !selectedFile} className={`h-12 px-8 rounded-2xl font-black transition-all flex items-center gap-3 shrink-0 active:scale-95 ${!query.trim() && !selectedFile ? 'bg-slate-800 text-slate-600' : 'bg-white text-black hover:bg-cyan-50 shadow-2xl'}`}>
-                      <span className="hidden sm:inline text-[11px] uppercase tracking-widest">Ignite Swarm</span>
+                    <button type="submit" disabled={!query.trim() && !selectedFile} className={`h-12 px-10 rounded-[1.5rem] font-black transition-all flex items-center gap-3 shrink-0 active:scale-95 ${!query.trim() && !selectedFile ? 'bg-slate-800 text-slate-600' : 'bg-white text-black hover:bg-cyan-50 shadow-2xl'}`}>
+                      <span className="hidden sm:inline text-xs uppercase tracking-widest">Ignite</span>
                       <SearchIcon className="w-5 h-5" />
                     </button>
                  </div>
               </form>
-              <div className="mt-8 flex justify-center items-center gap-8 opacity-20 pointer-events-none">
-                 <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-400">Precision Swarm Kernel v8.5</p>
-                 <div className="w-1.5 h-1.5 bg-slate-400 rounded-full" />
-                 <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-400">Grounded Logic Mode</p>
+              <div className="mt-8 flex justify-center gap-12 opacity-20 pointer-events-none">
+                 <p className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-400">Precision Swarm Kernel v11.0</p>
+                 <p className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-400">Neural Autonomy Mode</p>
               </div>
            </div>
         </div>

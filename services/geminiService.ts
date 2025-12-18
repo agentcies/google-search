@@ -3,10 +3,10 @@ import { GoogleGenAI, Part, FunctionDeclaration, Type } from "@google/genai";
 import { GroundingChunk, FileContext, ChatMessage } from "../types";
 
 export interface SearchOptions {
-  model: 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
-  deepSearch: boolean;
-  useMaps: boolean;
-  persona: 'general' | 'financial' | 'technical' | 'market';
+  model: 'gemini-3-pro-preview' | 'gemini-3-flash-preview';
+  autonomous: boolean;
+  persona?: string;
+  useMaps?: boolean;
   location?: { latitude: number; longitude: number };
   fileContext?: FileContext;
 }
@@ -15,7 +15,7 @@ const manageTasksDeclaration: FunctionDeclaration = {
   name: 'manageTasks',
   parameters: {
     type: Type.OBJECT,
-    description: 'Update the mission control board with current sub-tasks and their statuses.',
+    description: 'Update the mission control board with sub-tasks and their statuses.',
     properties: {
       tasks: {
         type: Type.ARRAY,
@@ -42,10 +42,9 @@ export class GeminiService {
   }
 
   async *searchStream(query: string, options: SearchOptions, history: ChatMessage[] = []) {
-    const thinkingBudget = options.deepSearch ? (options.model === 'gemini-3-pro-preview' ? 16000 : 8000) : 0;
-    
-    // Maps grounding is strictly supported in Gemini 2.5 series.
-    const activeModel = options.useMaps ? 'gemini-2.5-flash' : options.model;
+    // Autonomous mode uses the highest possible intelligence and thinking budget
+    const activeModel = options.autonomous ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
+    const thinkingBudget = options.autonomous ? 32000 : 8000;
 
     const contents: any[] = history.map(msg => ({
       role: msg.role,
@@ -64,26 +63,45 @@ export class GeminiService {
 
     contents.push({ role: 'user', parts: currentParts });
 
-    const tools: any[] = [{ googleSearch: {} }];
-    if (options.useMaps) {
+    // In Uber-Smart mode, we provide EVERYTHING. The model decides.
+    const tools: any[] = [
+      { googleSearch: {} },
+      { codeExecution: {} },
+      { functionDeclarations: [manageTasksDeclaration] }
+    ];
+
+    // Note: Maps grounding has specific model requirements (2.5 series).
+    // If autonomous mode detects map needs, we may route through 2.5-flash internally.
+    const internalModel = (options.useMaps || (options.autonomous && query.toLowerCase().match(/(nearby|where|location|restaurant|find)/))) 
+      ? 'gemini-2.5-flash' 
+      : activeModel;
+
+    if (internalModel === 'gemini-2.5-flash') {
       tools.push({ googleMaps: {} });
-    } else {
-      tools.push({ codeExecution: {} });
-      tools.push({ functionDeclarations: [manageTasksDeclaration] });
     }
 
-    const personas = {
-      general: "OMNI-ANALYST: Generalist with deep focus on clarity and synthesis.",
-      financial: "FISCAL-QUANT: Market analyst focused on ROI, trends, and risk assessment.",
-      technical: "SYSTEM-ARCHITECT: Deep technical documentation, specs, and engineering logic.",
-      market: "MARKET-INTELLIGENCE: Competitor analysis and consumer sentiment specialist."
-    };
+    const systemInstruction = options.autonomous 
+      ? `SYSTEM: OMNI-ORCHESTRATOR v11.0 [NEURAL AUTONOMY ENABLED]
+      
+      YOUR MISSION: 
+      1. SELF-CONFIGURE: Analyze the user's prompt. Decide which persona (Generalist, Fiscal, Architect, or Market Analyst) is best.
+      2. META-LOGGING: Use [SWARM_LOG] [META-PLANNER] to report your configuration decisions to the user.
+         Example: "[SWARM_LOG] [META-PLANNER] > Technical intent detected. Activating System-Architect kernel and Code Execution."
+      3. TOOL SELECTION: Use Google Search, Google Maps, and Code Execution as needed. 
+      4. MISSION BOARD: Use 'manageTasks' to break down the query into logical sub-objectives.
+      5. DATA SYNTHESIS: Produce a high-density Markdown report.
+      
+      CRITICAL: After the report, output [DATA_BOUNDARY] and a JSON object for API ingestion:
+      { "sentiment": "string", "entities": [], "metrics": {}, "confidence_score": 0.0-1.0 }`
+      : `SYSTEM: OMNISEARCH CORE [MANUAL MODE]
+      PERSONA: ${options.persona || 'Generalist'}
+      RULES: Log steps with [SWARM_LOG]. Start report immediately. Use 'manageTasks'. Output [DATA_BOUNDARY] + JSON.`;
 
     const config: any = {
       tools,
-      thinkingConfig: activeModel.includes('gemini-3') ? { thinkingBudget } : undefined,
-      maxOutputTokens: (activeModel.includes('gemini-3') && thinkingBudget > 0) ? 30000 : undefined,
-      toolConfig: (options.useMaps && options.location) ? {
+      thinkingConfig: internalModel.includes('gemini-3') ? { thinkingBudget } : undefined,
+      maxOutputTokens: (internalModel.includes('gemini-3')) ? 40000 : undefined,
+      toolConfig: (options.location) ? {
         retrievalConfig: {
           latLng: {
             latitude: options.location.latitude,
@@ -91,25 +109,12 @@ export class GeminiService {
           }
         }
       } : undefined,
-      systemInstruction: `SYSTEM: OMNISEARCH v8.5 OPERATING KERNEL
-      
-      CORE MISSION: Execute a high-fidelity research mission for the user.
-      PERSONA: ${personas[options.persona]}
-
-      ORCHESTRATION RULES:
-      1. LOGGING: Every internal step must be logged with [SWARM_LOG] prefix.
-         Example: [SWARM_LOG] [ARCHITECT] > Querying global restaurant indices.
-      2. REPORTING: Start the synthesis report immediately. Do not wait for tools to finish.
-      3. COMPLETION: When data acquisition is 100% finished, output the [DATA_BOUNDARY] marker.
-      4. JSON PAYLOAD: After [DATA_BOUNDARY], output ONLY valid JSON for API ingestion:
-         { "sentiment": "positive|negative|neutral|mixed", "summary": "brief summary", "confidence": 0.95 }
-
-      ${options.useMaps ? 'SPATIAL MODE: Use Maps for live status, coordinates, and local context.' : 'ANALYTIC MODE: Use code for complex logic and manageTasks for multi-step missions.'}`,
+      systemInstruction,
     };
 
     try {
       const resultStream = await this.ai.models.generateContentStream({
-        model: activeModel,
+        model: internalModel,
         contents: contents,
         config: config
       });
@@ -139,7 +144,7 @@ export class GeminiService {
         isComplete: true
       };
     } catch (error: any) {
-      console.error("Critical Swarm Failure:", error);
+      console.error("Autonomy Failure:", error);
       throw error;
     }
   }
