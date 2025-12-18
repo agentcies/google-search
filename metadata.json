@@ -1,0 +1,7 @@
+{
+  "name": "OmniSearch AI Engine",
+  "description": "A high-performance search engine and data extraction API tool powered by Gemini 3.0 Pro. Provides dual grounding via Google Search and Maps for absolute data precision.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
