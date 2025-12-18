@@ -28,6 +28,8 @@ export interface MissionTask {
   searchId: string;
 }
 
+export type LayoutMode = 'AUTO' | 'REPORT_ONLY' | 'SPATIAL_SPLIT' | 'DATA_FOCUS';
+
 export interface SearchResult {
   id: string;
   query: string;
@@ -42,6 +44,7 @@ export interface SearchResult {
   subTasks?: string[];
   isSaved?: boolean;
   swarmLogs?: string[];
+  suggestedLayout?: LayoutMode;
 }
 
 export interface SearchState {

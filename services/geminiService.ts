@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Part, FunctionDeclaration, Type } from "@google/genai";
-import { GroundingChunk, FileContext, ChatMessage } from "../types";
+import { GroundingChunk, FileContext, ChatMessage, LayoutMode } from "../types";
 
 export interface SearchOptions {
   model: 'gemini-3-pro-preview' | 'gemini-3-flash-preview';
@@ -15,7 +15,7 @@ const manageTasksDeclaration: FunctionDeclaration = {
   name: 'manageTasks',
   parameters: {
     type: Type.OBJECT,
-    description: 'Update the mission control board with sub-tasks and their statuses.',
+    description: 'Update the mission control board with current sub-tasks and their statuses.',
     properties: {
       tasks: {
         type: Type.ARRAY,
@@ -42,9 +42,8 @@ export class GeminiService {
   }
 
   async *searchStream(query: string, options: SearchOptions, history: ChatMessage[] = []) {
-    // Autonomous mode uses the highest possible intelligence and thinking budget
     const activeModel = options.autonomous ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
-    const thinkingBudget = options.autonomous ? 32000 : 8000;
+    const thinkingBudget = options.autonomous ? 12000 : 0;
 
     const contents: any[] = history.map(msg => ({
       role: msg.role,
@@ -54,61 +53,44 @@ export class GeminiService {
     const currentParts: Part[] = [{ text: query }];
     if (options.fileContext) {
       currentParts.push({
-        inlineData: {
-          data: options.fileContext.data,
-          mimeType: options.fileContext.mimeType
-        }
+        inlineData: { data: options.fileContext.data, mimeType: options.fileContext.mimeType }
       });
     }
 
     contents.push({ role: 'user', parts: currentParts });
 
-    // In Uber-Smart mode, we provide EVERYTHING. The model decides.
+    const isSpatialQuery = query.toLowerCase().match(/(where|location|find|near|restaurant|food|hotel|address|street|map|sf|nyc|london)/);
+    const internalModel = (isSpatialQuery || options.useMaps) ? 'gemini-2.5-flash' : activeModel;
+    
     const tools: any[] = [
       { googleSearch: {} },
       { codeExecution: {} },
       { functionDeclarations: [manageTasksDeclaration] }
     ];
 
-    // Note: Maps grounding has specific model requirements (2.5 series).
-    // If autonomous mode detects map needs, we may route through 2.5-flash internally.
-    const internalModel = (options.useMaps || (options.autonomous && query.toLowerCase().match(/(nearby|where|location|restaurant|find)/))) 
-      ? 'gemini-2.5-flash' 
-      : activeModel;
-
-    if (internalModel === 'gemini-2.5-flash') {
+    if (isSpatialQuery || options.useMaps) {
       tools.push({ googleMaps: {} });
     }
 
-    const systemInstruction = options.autonomous 
-      ? `SYSTEM: OMNI-ORCHESTRATOR v11.0 [NEURAL AUTONOMY ENABLED]
-      
-      YOUR MISSION: 
-      1. SELF-CONFIGURE: Analyze the user's prompt. Decide which persona (Generalist, Fiscal, Architect, or Market Analyst) is best.
-      2. META-LOGGING: Use [SWARM_LOG] [META-PLANNER] to report your configuration decisions to the user.
-         Example: "[SWARM_LOG] [META-PLANNER] > Technical intent detected. Activating System-Architect kernel and Code Execution."
-      3. TOOL SELECTION: Use Google Search, Google Maps, and Code Execution as needed. 
-      4. MISSION BOARD: Use 'manageTasks' to break down the query into logical sub-objectives.
-      5. DATA SYNTHESIS: Produce a high-density Markdown report.
-      
-      CRITICAL: After the report, output [DATA_BOUNDARY] and a JSON object for API ingestion:
-      { "sentiment": "string", "entities": [], "metrics": {}, "confidence_score": 0.0-1.0 }`
-      : `SYSTEM: OMNISEARCH CORE [MANUAL MODE]
-      PERSONA: ${options.persona || 'Generalist'}
-      RULES: Log steps with [SWARM_LOG]. Start report immediately. Use 'manageTasks'. Output [DATA_BOUNDARY] + JSON.`;
+    const systemInstruction = `SYSTEM: NEXUS-ORCHESTRATOR v14.0 [ADAPTIVE_SYNERGY]
+    
+    MISSION: Deliver absolute data-density. 
+    ADAPTIVE UI INSTRUCTIONS:
+    1. At the very start, output [LAYOUT: MODE] based on the query.
+       - If spatial/local: [LAYOUT: SPATIAL_SPLIT]
+       - If complex/analytic: [LAYOUT: DATA_FOCUS]
+       - If general: [LAYOUT: REPORT_ONLY]
+    2. SWARM LOGGING: Prefix reasoning with [SWARM_LOG].
+    3. DATA DENSITY: No conversational filler. Use tables for metrics.
+    4. MISSION CONTROL: Call 'manageTasks' immediately but continue writing the report without pausing.
+    5. API EXIT: End with [DATA_BOUNDARY] then the high-fidelity JSON payload.
+    
+    DATA_TARGET: EXHAUSTIVE_GROUNDED_FACTS.`;
 
     const config: any = {
       tools,
       thinkingConfig: internalModel.includes('gemini-3') ? { thinkingBudget } : undefined,
-      maxOutputTokens: (internalModel.includes('gemini-3')) ? 40000 : undefined,
-      toolConfig: (options.location) ? {
-        retrievalConfig: {
-          latLng: {
-            latitude: options.location.latitude,
-            longitude: options.location.longitude
-          }
-        }
-      } : undefined,
+      maxOutputTokens: internalModel.includes('gemini-3') ? 35000 : undefined,
       systemInstruction,
     };
 
@@ -121,10 +103,17 @@ export class GeminiService {
 
       let fullText = "";
       let groundingChunks: GroundingChunk[] = [];
+      let suggestedLayout: LayoutMode = 'AUTO';
 
       for await (const chunk of resultStream) {
-        fullText += chunk.text || "";
+        const textChunk = chunk.text || "";
+        fullText += textChunk;
         
+        // Dynamic Layout Detection
+        if (fullText.includes('[LAYOUT: SPATIAL_SPLIT]')) suggestedLayout = 'SPATIAL_SPLIT';
+        else if (fullText.includes('[LAYOUT: DATA_FOCUS]')) suggestedLayout = 'DATA_FOCUS';
+        else if (fullText.includes('[LAYOUT: REPORT_ONLY]')) suggestedLayout = 'REPORT_ONLY';
+
         const metadata = chunk.candidates?.[0]?.groundingMetadata;
         if (metadata?.groundingChunks) {
           groundingChunks = metadata.groundingChunks as any;
@@ -134,17 +123,14 @@ export class GeminiService {
           text: fullText,
           chunks: groundingChunks,
           functionCalls: chunk.functionCalls,
-          isComplete: false
+          isComplete: false,
+          suggestedLayout
         };
       }
 
-      yield {
-        text: fullText,
-        chunks: groundingChunks,
-        isComplete: true
-      };
+      yield { text: fullText, chunks: groundingChunks, isComplete: true, suggestedLayout };
     } catch (error: any) {
-      console.error("Autonomy Failure:", error);
+      console.error("Core Engine Fault:", error);
       throw error;
     }
   }
