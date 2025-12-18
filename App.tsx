@@ -23,7 +23,7 @@ const App: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('nexus_v14');
+    const saved = localStorage.getItem('nexus_v14_1');
     if (saved) {
       try {
         const data = JSON.parse(saved);
@@ -34,7 +34,7 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('nexus_v14', JSON.stringify({ history: state.history.slice(0, 30), tasks: state.tasks }));
+    localStorage.setItem('nexus_v14_1', JSON.stringify({ history: state.history.slice(0, 30), tasks: state.tasks }));
   }, [state.history, state.tasks]);
 
   const parseOutput = (text: string) => {
@@ -59,6 +59,10 @@ const App: React.FC = () => {
     const activeQuery = query.trim();
     if (!activeQuery && !selectedFile) return;
 
+    // Pre-detect spatial queries to update UI immediately
+    const isSpatial = activeQuery.toLowerCase().match(/(where|location|find|near|restaurant|food|hotel|address|street|map|sf|nyc|london|tenderloin)/);
+    const predictedLayout: LayoutMode = isSpatial ? 'SPATIAL_SPLIT' : 'AUTO';
+
     const searchId = Math.random().toString(36).substring(7);
     const fileToUse = selectedFile;
     setQuery('');
@@ -66,7 +70,7 @@ const App: React.FC = () => {
 
     const initial: SearchResult = {
       id: searchId, query: activeQuery || "Visual Synthesis", answer: '', messages: [], chunks: [],
-      timestamp: Date.now(), status: 'streaming', fileContext: fileToUse || undefined, suggestedLayout: 'AUTO'
+      timestamp: Date.now(), status: 'streaming', fileContext: fileToUse || undefined, suggestedLayout: predictedLayout
     };
 
     setState(prev => ({ ...prev, activeNodeIds: [...prev.activeNodeIds, searchId], history: [initial, ...prev.history], tasks: [] }));
@@ -93,7 +97,7 @@ const App: React.FC = () => {
           history: prev.history.map(h => h.id === searchId ? {
             ...h, answer: report, chunks: update.chunks, swarmLogs: logs, rawJson,
             status: update.isComplete ? 'completed' : 'streaming', sentiment: rawJson?.sentiment,
-            suggestedLayout: update.suggestedLayout
+            suggestedLayout: update.suggestedLayout !== 'AUTO' ? update.suggestedLayout : h.suggestedLayout
           } : h)
         }));
       }
@@ -125,15 +129,15 @@ const App: React.FC = () => {
         <div className="p-6 h-full flex flex-col space-y-8">
            <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-600 to-blue-700 flex items-center justify-center shadow-lg"><SearchIcon className="w-6 h-6 text-white" /></div>
-              <h1 className="text-[11px] font-black uppercase tracking-[0.3em]">Nexus v14</h1>
+              <h1 className="text-[11px] font-black uppercase tracking-[0.3em]">Nexus v14.1</h1>
            </div>
            <button onClick={() => { setSelectedId(null); setIsSidebarOpen(false); }} className="w-full py-4 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all">New Synthesis</button>
            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-6">
               <div className="px-2">
-                 <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Archive</label>
+                 <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Mission Vault</label>
                  <div className="mt-4 space-y-1">
                     {state.history.map(h => (
-                      <button key={h.id} onClick={() => { setSelectedId(h.id); setIsSidebarOpen(false); }} className={`w-full text-left p-3.5 rounded-xl transition-all border text-[11px] font-bold truncate flex items-center gap-3 ${selectedId === h.id ? 'bg-slate-800/80 border-cyan-500/30 text-white' : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300'}`}>
+                      <button key={h.id} onClick={() => { setSelectedId(h.id); setIsSidebarOpen(false); }} className={`w-full text-left p-3.5 rounded-xl transition-all border text-[11px] font-bold truncate flex items-center gap-3 ${selectedId === h.id ? 'bg-slate-800/80 border-cyan-500/30 text-white shadow-xl shadow-cyan-500/5' : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300'}`}>
                          <div className={`w-1 h-1 rounded-full ${h.status === 'streaming' ? 'bg-cyan-500 animate-pulse' : 'bg-slate-700'}`} />
                          {h.query}
                       </button>
@@ -174,7 +178,7 @@ const App: React.FC = () => {
                 </div>
                 <div className="space-y-4">
                   <h2 className="text-6xl font-black text-white italic tracking-tighter uppercase leading-none">NEXUS CORE</h2>
-                  <p className="text-slate-500 text-xl font-medium tracking-tight">The ultimate autonomous search & API engine.</p>
+                  <p className="text-slate-500 text-xl font-medium tracking-tight">Ultimate Data & Search Engine. Zero Latency Synthesis.</p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full opacity-60">
                    {["Detailed market data for EV startups", "Hardware specs of RTX 50 series", "Michelin star restaurants in SF", "Comparison of LLM architectures"].map(s => (
@@ -194,7 +198,7 @@ const App: React.FC = () => {
                                {currentResult.status === 'streaming' ? 'Synthesis in Progress...' : 'Task Complete'}
                             </div>
                          </div>
-                         <h1 className="text-4xl font-black text-white tracking-tighter uppercase leading-tight border-l-4 border-cyan-500 pl-8">{currentResult.query}</h1>
+                         <h1 className="text-4xl md:text-5xl font-black text-white tracking-tighter uppercase leading-tight border-l-4 border-cyan-500 pl-8">{currentResult.query}</h1>
                       </div>
 
                       {/* Swarm Intelligence Log (HUD overlay style) */}
@@ -210,13 +214,25 @@ const App: React.FC = () => {
                       ) : null}
 
                       {currentResult.answer ? (
-                        <div className="p-8 md:p-12 rounded-[3rem] bg-[#070b14] border border-slate-800/60 shadow-2xl backdrop-blur-3xl animate-in fade-in">
+                        <div className="p-8 md:p-12 rounded-[3rem] bg-[#070b14]/80 border border-slate-800/60 shadow-2xl backdrop-blur-3xl animate-in fade-in transition-all">
                            <MarkdownContent content={currentResult.answer} />
                         </div>
                       ) : (
-                        <div className="py-32 flex flex-col items-center gap-8">
-                           <LoadingSpinner />
-                           <p className="text-cyan-500 font-black text-[11px] uppercase tracking-[0.4em] animate-pulse">Compiling Evidence...</p>
+                        <div className="py-32 flex flex-col items-center gap-10">
+                           <div className="relative">
+                              <div className="absolute inset-0 bg-cyan-500/20 blur-3xl rounded-full animate-pulse" />
+                              <LoadingSpinner />
+                           </div>
+                           <div className="space-y-4 text-center">
+                              <p className="text-cyan-500 font-black text-[12px] uppercase tracking-[0.5em] animate-pulse">Compiling Proof of Concept</p>
+                              {currentResult.swarmLogs?.length ? (
+                                <p className="text-slate-500 text-[9px] font-bold uppercase tracking-widest animate-in fade-in">
+                                  {currentResult.swarmLogs[currentResult.swarmLogs.length - 1]}
+                                </p>
+                              ) : (
+                                <p className="text-slate-600 text-[9px] font-bold uppercase tracking-widest">Accessing global knowledge clusters...</p>
+                              )}
+                           </div>
                         </div>
                       )}
                       
@@ -235,18 +251,26 @@ const App: React.FC = () => {
                           </div>
                           <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
                              {currentResult.chunks.filter(c => c.maps).map((c, i) => (
-                               <div key={i} className="h-80 rounded-[2.5rem] border border-slate-800 overflow-hidden bg-slate-950 relative group shadow-2xl">
+                               <div key={i} className="h-80 rounded-[2.5rem] border border-slate-800 overflow-hidden bg-slate-950 relative group shadow-2xl transition-all hover:border-cyan-500/50">
                                   <iframe title={c.maps?.title} width="100%" height="100%" frameBorder="0" src={`https://maps.google.com/maps?q=${encodeURIComponent(c.maps?.title || '')}&t=m&z=15&ie=UTF8&iwloc=&output=embed`} className="grayscale invert contrast-125 opacity-70 group-hover:opacity-100 transition-opacity duration-1000" />
                                   <div className="absolute bottom-4 left-4 p-3 bg-black/90 backdrop-blur-md border border-white/5 rounded-xl text-[9px] font-black uppercase tracking-widest">{c.maps?.title}</div>
                                </div>
                              ))}
+                             {currentResult.chunks.filter(c => c.maps).length === 0 && currentResult.status === 'streaming' && (
+                               <div className="py-20 flex flex-col items-center gap-6 opacity-40">
+                                  <div className="w-12 h-12 rounded-full border border-dashed border-cyan-500 animate-spin-slow flex items-center justify-center">
+                                    <div className="w-2 h-2 bg-cyan-500 rounded-full" />
+                                  </div>
+                                  <p className="text-[9px] font-black uppercase tracking-widest">Scanning Spatial Dimensions...</p>
+                               </div>
+                             )}
                              {currentResult.chunks.filter(c => c.web).length > 0 && (
                                <div className="space-y-3">
                                   <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest px-2">Web Grounding References</label>
                                   {currentResult.chunks.filter(c => c.web).map((c, i) => (
-                                    <a key={i} href={c.web?.uri} target="_blank" rel="noreferrer" className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 transition-all group">
+                                    <a key={i} href={c.web?.uri} target="_blank" rel="noreferrer" className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5 hover:bg-white/10 hover:border-cyan-500/30 transition-all group">
                                        <span className="text-[11px] font-bold text-slate-400 group-hover:text-white transition-colors">{c.web?.title}</span>
-                                       <ExternalLinkIcon className="w-3.5 h-3.5 text-slate-600" />
+                                       <ExternalLinkIcon className="w-3.5 h-3.5 text-slate-600 group-hover:text-cyan-400" />
                                     </a>
                                   ))}
                                </div>
@@ -258,6 +282,7 @@ const App: React.FC = () => {
                           <div className="p-8 rounded-[3rem] bg-black border border-slate-800 shadow-inner">
                              <div className="flex items-center justify-between mb-8 pb-4 border-b border-white/5">
                                 <span className="text-[10px] font-black uppercase tracking-widest text-cyan-500">Structured Intelligence Payload</span>
+                                <button onClick={() => navigator.clipboard.writeText(JSON.stringify(currentResult.rawJson || {}, null, 2))} className="p-2 hover:bg-cyan-500/10 rounded-lg transition-all"><CopyIcon className="w-4 h-4" /></button>
                              </div>
                              <pre className="text-cyan-400/80 font-mono text-[12px] leading-relaxed whitespace-pre-wrap">
                                 {JSON.stringify(currentResult.rawJson || { "status": "Analyzing discovered entities..." }, null, 2)}
@@ -296,7 +321,7 @@ const App: React.FC = () => {
                       placeholder={isAutonomous ? "Command the Nexus core..." : "Enter research parameters..."}
                       className="flex-1 bg-transparent border-none focus:ring-0 px-5 py-5 text-white placeholder-slate-800 text-xl font-bold tracking-tight resize-none no-scrollbar min-h-[74px]"
                     />
-                    <button type="submit" disabled={!query.trim() && !selectedFile} className={`h-14 px-10 rounded-[1.8rem] font-black transition-all flex items-center gap-4 shrink-0 active:scale-95 ${!query.trim() && !selectedFile ? 'bg-slate-900 text-slate-700 border border-slate-800' : 'bg-white text-black hover:bg-cyan-50'}`}>
+                    <button type="submit" disabled={!query.trim() && !selectedFile} className={`h-14 px-10 rounded-[1.8rem] font-black transition-all flex items-center gap-4 shrink-0 active:scale-95 ${!query.trim() && !selectedFile ? 'bg-slate-900 text-slate-700 border border-slate-800' : 'bg-white text-black hover:bg-cyan-50 shadow-2xl shadow-white/5'}`}>
                       <span className="hidden sm:inline text-[10px] uppercase tracking-widest">Execute</span>
                       <SearchIcon className="w-6 h-6" />
                     </button>

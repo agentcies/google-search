@@ -42,8 +42,18 @@ export class GeminiService {
   }
 
   async *searchStream(query: string, options: SearchOptions, history: ChatMessage[] = []) {
-    const activeModel = options.autonomous ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
-    const thinkingBudget = options.autonomous ? 12000 : 0;
+    // Spatial queries require 2.5-flash for Maps grounding.
+    const isSpatialQuery = query.toLowerCase().match(/(where|location|find|near|restaurant|food|hotel|address|street|map|sf|nyc|london|tenderloin)/);
+    
+    // Choose model based on query complexity and capability requirements
+    // For spatial, we MUST use 2.5-flash. For others, 3-flash is faster than 3-pro.
+    let activeModel = options.autonomous ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
+    if (isSpatialQuery || options.useMaps) {
+      activeModel = 'gemini-2.5-flash';
+    }
+
+    // Thinking budget optimization: Zero for spatial/fast lookups to avoid "forever" loading.
+    const thinkingBudget = (isSpatialQuery || !options.autonomous) ? 0 : 8000;
 
     const contents: any[] = history.map(msg => ({
       role: msg.role,
@@ -59,9 +69,6 @@ export class GeminiService {
 
     contents.push({ role: 'user', parts: currentParts });
 
-    const isSpatialQuery = query.toLowerCase().match(/(where|location|find|near|restaurant|food|hotel|address|street|map|sf|nyc|london)/);
-    const internalModel = (isSpatialQuery || options.useMaps) ? 'gemini-2.5-flash' : activeModel;
-    
     const tools: any[] = [
       { googleSearch: {} },
       { codeExecution: {} },
@@ -72,31 +79,31 @@ export class GeminiService {
       tools.push({ googleMaps: {} });
     }
 
-    const systemInstruction = `SYSTEM: NEXUS-ORCHESTRATOR v14.0 [ADAPTIVE_SYNERGY]
+    const systemInstruction = `SYSTEM: NEXUS-ORCHESTRATOR v14.1 [PERFORMANCE_OPTIMIZED]
     
-    MISSION: Deliver absolute data-density. 
+    MISSION: Deliver absolute data-density with MINIMAL LATENCY. 
     ADAPTIVE UI INSTRUCTIONS:
-    1. At the very start, output [LAYOUT: MODE] based on the query.
-       - If spatial/local: [LAYOUT: SPATIAL_SPLIT]
-       - If complex/analytic: [LAYOUT: DATA_FOCUS]
-       - If general: [LAYOUT: REPORT_ONLY]
-    2. SWARM LOGGING: Prefix reasoning with [SWARM_LOG].
-    3. DATA DENSITY: No conversational filler. Use tables for metrics.
-    4. MISSION CONTROL: Call 'manageTasks' immediately but continue writing the report without pausing.
+    1. IMMEDIATELY output [LAYOUT: MODE] based on the query type.
+       - Spatial/Local/Maps needed: [LAYOUT: SPATIAL_SPLIT]
+       - Heavy Data/Specs: [LAYOUT: DATA_FOCUS]
+       - Text/Insight: [LAYOUT: REPORT_ONLY]
+    2. SWARM LOGGING: Prefix reasoning with [SWARM_LOG]. Log every tool use, e.g., "[SWARM_LOG] > Accessing Google Maps indices for ${query}"
+    3. DATA DENSITY: Use tables and lists. No conversational filler.
+    4. TASKING: Call 'manageTasks' to show your plan, but start the report stream concurrently.
     5. API EXIT: End with [DATA_BOUNDARY] then the high-fidelity JSON payload.
     
-    DATA_TARGET: EXHAUSTIVE_GROUNDED_FACTS.`;
+    PRIORITY: SPEED AND FACTUAL DENSITY.`;
 
     const config: any = {
       tools,
-      thinkingConfig: internalModel.includes('gemini-3') ? { thinkingBudget } : undefined,
-      maxOutputTokens: internalModel.includes('gemini-3') ? 35000 : undefined,
+      thinkingConfig: activeModel.includes('gemini-3') ? { thinkingBudget } : undefined,
+      maxOutputTokens: activeModel.includes('gemini-3') ? 25000 : undefined,
       systemInstruction,
     };
 
     try {
       const resultStream = await this.ai.models.generateContentStream({
-        model: internalModel,
+        model: activeModel,
         contents: contents,
         config: config
       });
@@ -109,7 +116,7 @@ export class GeminiService {
         const textChunk = chunk.text || "";
         fullText += textChunk;
         
-        // Dynamic Layout Detection
+        // Instant Layout Detection
         if (fullText.includes('[LAYOUT: SPATIAL_SPLIT]')) suggestedLayout = 'SPATIAL_SPLIT';
         else if (fullText.includes('[LAYOUT: DATA_FOCUS]')) suggestedLayout = 'DATA_FOCUS';
         else if (fullText.includes('[LAYOUT: REPORT_ONLY]')) suggestedLayout = 'REPORT_ONLY';
