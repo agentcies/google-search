@@ -15,28 +15,22 @@ const manageTasksDeclaration: FunctionDeclaration = {
   name: 'manageTasks',
   parameters: {
     type: Type.OBJECT,
-    description: 'Create, update, or delete mission objectives/tasks for the current research swarm.',
+    description: 'Update the mission control board with current sub-tasks and their statuses.',
     properties: {
-      action: {
-        type: Type.STRING,
-        description: 'The action to perform.',
-        enum: ['create', 'update', 'delete'],
-      },
-      taskId: {
-        type: Type.STRING,
-        description: 'A unique identifier for the task (e.g., task_1).',
-      },
-      description: {
-        type: Type.STRING,
-        description: 'Detailed description of the mission objective.',
-      },
-      status: {
-        type: Type.STRING,
-        description: 'Current state of the objective.',
-        enum: ['pending', 'in_progress', 'completed'],
+      tasks: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING },
+            description: { type: Type.STRING },
+            status: { type: Type.STRING, enum: ['pending', 'in_progress', 'completed'] },
+          },
+          required: ['id', 'description', 'status'],
+        },
       },
     },
-    required: ['action', 'taskId'],
+    required: ['tasks'],
   },
 };
 
@@ -49,7 +43,8 @@ export class GeminiService {
 
   async *searchStream(query: string, options: SearchOptions, history: ChatMessage[] = []) {
     const thinkingBudget = options.deepSearch ? (options.model === 'gemini-3-pro-preview' ? 16000 : 8000) : 0;
-    // Maps grounding is only supported in Gemini 2.5 series models.
+    
+    // Maps grounding is strictly supported in Gemini 2.5 series.
     const activeModel = options.useMaps ? 'gemini-2.5-flash' : options.model;
 
     const contents: any[] = history.map(msg => ({
@@ -69,18 +64,19 @@ export class GeminiService {
 
     contents.push({ role: 'user', parts: currentParts });
 
-    const tools: any[] = [
-      { googleSearch: {} },
-      { codeExecution: {} },
-      { functionDeclarations: [manageTasksDeclaration] }
-    ];
-    if (options.useMaps) tools.push({ googleMaps: {} });
+    const tools: any[] = [{ googleSearch: {} }];
+    if (options.useMaps) {
+      tools.push({ googleMaps: {} });
+    } else {
+      tools.push({ codeExecution: {} });
+      tools.push({ functionDeclarations: [manageTasksDeclaration] });
+    }
 
     const personas = {
-      general: "OMNI-RESEARCHER: Balanced, comprehensive, and clear.",
-      financial: "QUANT-ANALYST: Focus on metrics, trends, market caps, and fiscal cycles.",
-      technical: "SYSTEM-ARCHITECT: Focus on specs, documentation, benchmarks, and performance data.",
-      market: "MARKET-INTELLIGENCE: Focus on competitors and consumer sentiment."
+      general: "OMNI-ANALYST: Generalist with deep focus on clarity and synthesis.",
+      financial: "FISCAL-QUANT: Market analyst focused on ROI, trends, and risk assessment.",
+      technical: "SYSTEM-ARCHITECT: Deep technical documentation, specs, and engineering logic.",
+      market: "MARKET-INTELLIGENCE: Competitor analysis and consumer sentiment specialist."
     };
 
     const config: any = {
@@ -95,26 +91,20 @@ export class GeminiService {
           }
         }
       } : undefined,
-      systemInstruction: `SYSTEM: OMNISEARCH COLLABORATIVE ORCHESTRATOR v6.0
+      systemInstruction: `SYSTEM: OMNISEARCH v8.5 OPERATING KERNEL
+      
+      CORE MISSION: Execute a high-fidelity research mission for the user.
       PERSONA: ${personas[options.persona]}
 
-      TASK MANAGEMENT DIRECTIVE:
-      You have access to a Mission Control Task Board. You MUST use 'manageTasks' to:
-      1. Create a checklist of mission objectives at the start of any new research node.
-      2. Update tasks to 'in_progress' when you start searching for them.
-      3. Mark tasks as 'completed' once synthesized.
-      4. Use tasks to stay focused on the user's ultimate goal.
+      ORCHESTRATION RULES:
+      1. LOGGING: Every internal step must be logged with [SWARM_LOG] prefix.
+         Example: [SWARM_LOG] [ARCHITECT] > Querying global restaurant indices.
+      2. REPORTING: Start the synthesis report immediately. Do not wait for tools to finish.
+      3. COMPLETION: When data acquisition is 100% finished, output the [DATA_BOUNDARY] marker.
+      4. JSON PAYLOAD: After [DATA_BOUNDARY], output ONLY valid JSON for API ingestion:
+         { "sentiment": "positive|negative|neutral|mixed", "summary": "brief summary", "confidence": 0.95 }
 
-      OPERATING MODES:
-      1. [ARCHITECT]: Decompose query into parallel data-acquisition threads. Create tasks here.
-      2. [RESEARCHER]: Grounded extraction. Update tasks to in_progress.
-      3. [ANALYST]: Synthesis & Sentiment. Finalize tasks here.
-      4. [AUDITOR]: API JSON generation.
-
-      STRICT OUTPUT PROTOCOL:
-      - Phase markers are mandatory.
-      - Synthesis Report (Markdown).
-      - [DATA_BOUNDARY] followed by structured JSON.`,
+      ${options.useMaps ? 'SPATIAL MODE: Use Maps for live status, coordinates, and local context.' : 'ANALYTIC MODE: Use code for complex logic and manageTasks for multi-step missions.'}`,
     };
 
     try {
@@ -128,22 +118,17 @@ export class GeminiService {
       let groundingChunks: GroundingChunk[] = [];
 
       for await (const chunk of resultStream) {
-        // Access chunk.text directly (not a method call) as per SDK guidelines.
-        const textChunk = chunk.text || "";
-        fullText += textChunk;
+        fullText += chunk.text || "";
         
         const metadata = chunk.candidates?.[0]?.groundingMetadata;
         if (metadata?.groundingChunks) {
           groundingChunks = metadata.groundingChunks as any;
         }
 
-        // Use the functionCalls getter available on the GenerateContentResponse object.
-        const functionCalls = chunk.functionCalls;
-
         yield {
           text: fullText,
           chunks: groundingChunks,
-          functionCalls,
+          functionCalls: chunk.functionCalls,
           isComplete: false
         };
       }
@@ -154,7 +139,7 @@ export class GeminiService {
         isComplete: true
       };
     } catch (error: any) {
-      console.error("Agentic Failure:", error);
+      console.error("Critical Swarm Failure:", error);
       throw error;
     }
   }

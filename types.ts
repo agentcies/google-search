@@ -40,6 +40,8 @@ export interface SearchResult {
   sentiment?: 'positive' | 'negative' | 'neutral' | 'mixed';
   status: 'initializing' | 'streaming' | 'completed' | 'failed';
   subTasks?: string[];
+  isSaved?: boolean;
+  swarmLogs?: string[];
 }
 
 export interface SearchState {
