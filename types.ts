@@ -16,20 +16,35 @@ export interface FileContext {
   name?: string;
 }
 
+export interface ChatMessage {
+  role: 'user' | 'model';
+  content: string;
+}
+
+export interface MissionTask {
+  id: string;
+  description: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  searchId: string;
+}
+
 export interface SearchResult {
   id: string;
   query: string;
   answer: string;
+  messages: ChatMessage[];
   chunks: GroundingChunk[];
   timestamp: number;
-  imageContext?: string; // base64 (legacy support)
   fileContext?: FileContext;
   rawJson?: any;
+  sentiment?: 'positive' | 'negative' | 'neutral' | 'mixed';
+  status: 'initializing' | 'streaming' | 'completed' | 'failed';
+  subTasks?: string[];
 }
 
 export interface SearchState {
-  isSearching: boolean;
-  currentResult: SearchResult | null;
+  activeNodeIds: string[];
   history: SearchResult[];
+  tasks: MissionTask[];
   error: string | null;
 }

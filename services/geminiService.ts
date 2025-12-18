@@ -1,14 +1,44 @@
 
-import { GoogleGenAI, GenerateContentResponse, Part } from "@google/genai";
-import { SearchResult, GroundingChunk, FileContext } from "../types";
+import { GoogleGenAI, Part, FunctionDeclaration, Type } from "@google/genai";
+import { GroundingChunk, FileContext, ChatMessage } from "../types";
 
 export interface SearchOptions {
   model: 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
   deepSearch: boolean;
   useMaps: boolean;
+  persona: 'general' | 'financial' | 'technical' | 'market';
   location?: { latitude: number; longitude: number };
   fileContext?: FileContext;
 }
+
+const manageTasksDeclaration: FunctionDeclaration = {
+  name: 'manageTasks',
+  parameters: {
+    type: Type.OBJECT,
+    description: 'Create, update, or delete mission objectives/tasks for the current research swarm.',
+    properties: {
+      action: {
+        type: Type.STRING,
+        description: 'The action to perform.',
+        enum: ['create', 'update', 'delete'],
+      },
+      taskId: {
+        type: Type.STRING,
+        description: 'A unique identifier for the task (e.g., task_1).',
+      },
+      description: {
+        type: Type.STRING,
+        description: 'Detailed description of the mission objective.',
+      },
+      status: {
+        type: Type.STRING,
+        description: 'Current state of the objective.',
+        enum: ['pending', 'in_progress', 'completed'],
+      },
+    },
+    required: ['action', 'taskId'],
+  },
+};
 
 export class GeminiService {
   private ai: GoogleGenAI;
@@ -17,15 +47,19 @@ export class GeminiService {
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
-  async *searchStream(query: string, options: SearchOptions) {
+  async *searchStream(query: string, options: SearchOptions, history: ChatMessage[] = []) {
     const thinkingBudget = options.deepSearch ? (options.model === 'gemini-3-pro-preview' ? 16000 : 8000) : 0;
-    
     // Maps grounding is only supported in Gemini 2.5 series models.
-    const activeModel = options.useMaps ? 'gemini-2.5-flash-latest' : options.model;
+    const activeModel = options.useMaps ? 'gemini-2.5-flash' : options.model;
 
-    const parts: Part[] = [{ text: query }];
+    const contents: any[] = history.map(msg => ({
+      role: msg.role,
+      parts: [{ text: msg.content }]
+    }));
+
+    const currentParts: Part[] = [{ text: query }];
     if (options.fileContext) {
-      parts.push({
+      currentParts.push({
         inlineData: {
           data: options.fileContext.data,
           mimeType: options.fileContext.mimeType
@@ -33,15 +67,24 @@ export class GeminiService {
       });
     }
 
-    const tools: any[] = [{ googleSearch: {} }];
-    if (options.useMaps) {
-      tools.push({ googleMaps: {} });
-    }
+    contents.push({ role: 'user', parts: currentParts });
+
+    const tools: any[] = [
+      { googleSearch: {} },
+      { codeExecution: {} },
+      { functionDeclarations: [manageTasksDeclaration] }
+    ];
+    if (options.useMaps) tools.push({ googleMaps: {} });
+
+    const personas = {
+      general: "OMNI-RESEARCHER: Balanced, comprehensive, and clear.",
+      financial: "QUANT-ANALYST: Focus on metrics, trends, market caps, and fiscal cycles.",
+      technical: "SYSTEM-ARCHITECT: Focus on specs, documentation, benchmarks, and performance data.",
+      market: "MARKET-INTELLIGENCE: Focus on competitors and consumer sentiment."
+    };
 
     const config: any = {
       tools,
-      // Gemini 2.5 models don't support thinkingBudget, but Gemini 3 does.
-      // We only apply thinking if we are using a Gemini 3 model.
       thinkingConfig: activeModel.includes('gemini-3') ? { thinkingBudget } : undefined,
       maxOutputTokens: (activeModel.includes('gemini-3') && thinkingBudget > 0) ? 30000 : undefined,
       toolConfig: (options.useMaps && options.location) ? {
@@ -52,26 +95,32 @@ export class GeminiService {
           }
         }
       } : undefined,
-      systemInstruction: `YOU ARE THE OMNISEARCH MULTI-AGENT ORCHESTRATOR WITH ADVANCED MULTIMODAL INTELLIGENCE.
-      
+      systemInstruction: `SYSTEM: OMNISEARCH COLLABORATIVE ORCHESTRATOR v6.0
+      PERSONA: ${personas[options.persona]}
+
+      TASK MANAGEMENT DIRECTIVE:
+      You have access to a Mission Control Task Board. You MUST use 'manageTasks' to:
+      1. Create a checklist of mission objectives at the start of any new research node.
+      2. Update tasks to 'in_progress' when you start searching for them.
+      3. Mark tasks as 'completed' once synthesized.
+      4. Use tasks to stay focused on the user's ultimate goal.
+
       OPERATING MODES:
-      1. [ARCHITECT]: Strategy & Context Analysis. If an image OR document (PDF, Text, etc.) is provided, identify ALL entities, technical specs, OCR text, and structural data.
-      2. [RESEARCHER]: Neural Grounding via Web Search ${options.useMaps ? 'and Google Maps' : ''}. Use the provided file context to verify claims, find pricing, or deeper documentation.
-      3. [ANALYST]: Cross-synthesis of file content and real-time textual grounding.
-      4. [AUDITOR]: Verify and format high-density API-ready JSON.
+      1. [ARCHITECT]: Decompose query into parallel data-acquisition threads. Create tasks here.
+      2. [RESEARCHER]: Grounded extraction. Update tasks to in_progress.
+      3. [ANALYST]: Synthesis & Sentiment. Finalize tasks here.
+      4. [AUDITOR]: API JSON generation.
 
       STRICT OUTPUT PROTOCOL:
-      - Start major phases with markers (e.g., [ARCHITECT] Analyzing Document Structure...).
-      - Provide a "Human-Readable Report" followed by a [DATA_BOUNDARY] marker.
-      - After the boundary, provide a minified JSON API object.
-      
-      LETHAL DIRECTIVE: No conversational filler. Extract EVERY possible metric from the provided file and the web.`,
+      - Phase markers are mandatory.
+      - Synthesis Report (Markdown).
+      - [DATA_BOUNDARY] followed by structured JSON.`,
     };
 
     try {
       const resultStream = await this.ai.models.generateContentStream({
         model: activeModel,
-        contents: { parts },
+        contents: contents,
         config: config
       });
 
@@ -79,6 +128,7 @@ export class GeminiService {
       let groundingChunks: GroundingChunk[] = [];
 
       for await (const chunk of resultStream) {
+        // Access chunk.text directly (not a method call) as per SDK guidelines.
         const textChunk = chunk.text || "";
         fullText += textChunk;
         
@@ -87,9 +137,13 @@ export class GeminiService {
           groundingChunks = metadata.groundingChunks as any;
         }
 
+        // Use the functionCalls getter available on the GenerateContentResponse object.
+        const functionCalls = chunk.functionCalls;
+
         yield {
           text: fullText,
           chunks: groundingChunks,
+          functionCalls,
           isComplete: false
         };
       }
@@ -100,26 +154,8 @@ export class GeminiService {
         isComplete: true
       };
     } catch (error: any) {
-      console.error("Agent Orchestration Error:", error);
-      
-      let message = "Neural swarm disconnected.";
-      let code = "UNKNOWN_ERROR";
-
-      if (error.message?.includes("429")) {
-        message = "Engine rate-limited. The swarm is cooling down.";
-        code = "RATE_LIMIT_EXCEEDED";
-      } else if (error.message?.includes("400")) {
-        message = "Invalid parameters. Check query or file format.";
-        code = "BAD_REQUEST";
-      } else if (error.message?.includes("500") || error.message?.includes("503")) {
-        message = "Global intelligence node offline.";
-        code = "SERVICE_UNAVAILABLE";
-      } else if (error.message?.includes("apiKey")) {
-        message = "Core authorization failed.";
-        code = "AUTH_FAILURE";
-      }
-
-      throw { message, code, originalError: error.message };
+      console.error("Agentic Failure:", error);
+      throw error;
     }
   }
 }
